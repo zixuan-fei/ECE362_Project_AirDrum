@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/feizixuan/ECE362_github/ECE362_Project_AirDrum/part_I2C/src",
+      "program": "/Users/feizixuan/ECE362_github/ECE362_Project_AirDrum/part_I2C/src/build/Debug/outDebug"
+    }
+  ]
+}
