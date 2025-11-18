@@ -43,10 +43,11 @@
 #define YAW_LEAK             0.08f    // yaw 泄漏
 #define UP_IS_POSITIVE       0        // 取 -Z 为“上”
 
-// —— 仅做 2/3/4/5 四个面 —— //
+// —— 现在做 2/3/4/5 + CYMBAL（6） —— //
 // 倾角分层（结合你调过的数据）
 #define FLOOR_TILT_MAX_DEG    18.0f   // floor：<=18°
-#define TOM_TILT_MIN_DEG      26.0f   // 上排：>=26°
+#define TOM_TILT_MIN_DEG      26.0f   // 上排 tom：>=26°
+#define CYMBAL_TILT_MIN_DEG   60.0f   // cymbal：抬得很高（>=60° 左右）
 
 // 左右滞回（更容易进入左右槽）
 #define YAW_ON_DEG             2.2f   // 进入左/右：|yaw| >= 2.2°
@@ -204,17 +205,22 @@ static void pose_warmup_and_zero(void){
     yaw_rel_deg = 0.0f;
 }
 
-/* ==================== 分区（2/3/4/5 + 滞回） ==================== */
+/* ==================== 分区（2/3/4/5 + CYMBAL 6） ==================== */
 static int last_side = 0; // -1:左, 0:中, +1:右
 
-// 2=SNARE, 3=HI_TOM, 4=MEDIUM_TOM, 5=FLOOR_TOM
+// 2=SNARE, 3=HI_TOM, 4=MEDIUM_TOM, 5=FLOOR_TOM, 6=CYMBAL
 static int slot_from_pose(float tilt_corr_deg, float yaw_deg, float gy_dps) {
     // 5: floor tom（低倾角 + 明显下挥）
     if (tilt_corr_deg <= FLOOR_TILT_MAX_DEG && gy_dps >= DOWN_PITCH_DPS) {
         return 5;
     }
 
-    // 上排
+    // 6: cymbal — 抬得很高的上挥（你高处打 c ymbal 时 tilt_corr 大约 60+）
+    if (tilt_corr_deg >= CYMBAL_TILT_MIN_DEG) {
+        return 6;
+    }
+
+    // 上排 tom：SNARE/HI_TOM/MEDIUM_TOM
     if (tilt_corr_deg >= TOM_TILT_MIN_DEG) {
         // 左右滞回
         if (last_side == 0) {
@@ -239,7 +245,7 @@ static void print_pose_at_hit(uint32_t hit_id,
                               int slot,
                               float tilt_raw, float tilt_corr,
                               float yaw_deg, Vec3 g, float gy_dps) {
-    if (slot == 2 || slot == 3 || slot == 4 || slot == 5) {
+    if (slot == 2 || slot == 3 || slot == 4 || slot == 5 || slot == 6) {
         printf("[HIT#%lu] slot=%d  tilt_raw=%.1f  tilt_corr=%.1f  yaw=%.1f  gy=%.1f  g=[%.2f,%.2f,%.2f]\n",
                (unsigned long)hit_id,
                slot, tilt_raw, tilt_corr, yaw_deg, gy_dps, g.x, g.y, g.z);
@@ -247,6 +253,7 @@ static void print_pose_at_hit(uint32_t hit_id,
         else if (slot==3) puts("HI_TOM");
         else if (slot==4) puts("MEDIUM_TOM");
         else if (slot==5) puts("FLOOR_TOM");
+        else if (slot==6) puts("CYMBAL");
     }
 }
 
