@@ -6,6 +6,10 @@
 #include "hardware/gpio.h"
 #include "imu_io.h"
 #include "customize.h"
+#include <stdlib.h>
+#include "hardware/pwm.h"
+#include "hardware/adc.h"  
+#include "sound.h"
 
 // ========= I2C / LSM6DSOX =========
 #define I2C_PORT      i2c0
@@ -53,6 +57,19 @@
 // 左右滞回（更容易进入左右槽）
 #define YAW_ON_DEG             2.2f   // 进入左/右：|yaw| >= 2.2°
 #define YAW_OFF_DEG            1.4f   // 回到中：  |yaw| <  1.4f
+
+//gpio parameters
+const uint audio_pin = 36;                
+const uint pwm_slice_num = 10;           
+const uint pwm_channel = PWM_CHAN_A;           
+//PWM parameters
+const float pwm_clk_div = 13.25f;          
+const uint16_t pwm_wrap_value = 255;  
+//ADC parameters
+const uint adc_pin = 45;
+const uint adc_input = 5;
+const float adc_clk_div = 11.34f;
+uint volume = 4095;
 
 /* ==================== I2C helpers ==================== */
 static inline int16_t u8pair_to_i16(uint8_t lo, uint8_t hi){ return (int16_t)((hi<<8)|lo); }
@@ -302,9 +319,126 @@ static void vga_hit_animation(int slot, float yaw_deg){
     }
 }
 
+
+// PWM Output
+
+//PWM Part
+void init_pwm_audio() {
+    gpio_set_function(audio_pin, GPIO_FUNC_PWM);
+    pwm_set_clkdiv(pwm_slice_num, pwm_clk_div);
+    pwm_set_wrap(pwm_slice_num, pwm_wrap_value);
+    pwm_set_chan_level(pwm_slice_num, pwm_channel, 0);
+
+    pwm_set_irq_enabled(pwm_slice_num, true);
+    irq_set_exclusive_handler(PWM_IRQ_WRAP_0, pwm_audio_handler);
+    irq_set_enabled(PWM_IRQ_WRAP_0, true);
+    pwm_set_enabled(pwm_slice_num, true);
+}
+
+
+
+void pwm_audio_handler() {
+
+    pwm_clear_irq(pwm_slice_num);
+
+    if(snare_played) {
+        offset_snare += 1;
+        if(offset_snare >= SNARE_LEN) {
+            snare_played = 0;
+            offset_snare = -1;
+        }
+    }
+
+    if(hitom_played) {
+        offset_hitom += 1;
+        if(offset_hitom >= HITOM_LEN) {
+            hitom_played = 0;
+            offset_hitom = -1;
+        }
+    }
+
+    if(midtom_played) {
+        offset_midtom += 1;
+        if(offset_midtom >= MIDTOM_LEN) {
+            midtom_played = 0;
+            offset_midtom = -1;
+        }
+    }
+
+    if (hihat_played) {
+        offset_hihat += 1;
+        if(offset_hihat >= HIHATS_LEN) {
+            hihat_played = 0;
+            offset_hihat = -1;
+        }
+    }
+
+    uint32_t samp = 0;
+    samp += (offset_snare != -1) ? ((uint32_t)(wavetable_snare[offset_snare] + 32768)) : 0;
+    samp += (offset_hitom != -1) ? ((uint32_t)(wavetable_hitom[offset_hitom] + 32768)) : 0;
+    samp += (offset_midtom != -1) ? ((uint32_t)(wavetable_midtom[offset_midtom] + 32768)) : 0;
+    samp += (offset_hihat != -1) ? ((uint32_t)(wavetable_hihat[offset_hihat] + 32768)) : 0;
+    int count = (offset_snare != -1) + (offset_hitom != -1) + (offset_midtom != -1) + (offset_hihat != -1);
+    samp /= (count > 0) ? count : 1;
+
+    //set volume ratio
+    samp = (samp * volume) / 4095;
+
+    samp = (samp * pwm_hw->slice[pwm_slice_num].top) / (1<<16);
+
+    pwm_set_chan_level(pwm_slice_num, pwm_channel, samp);
+}
+
+//ADC Part
+void init_adc() {
+    adc_init();
+    adc_gpio_init(adc_pin);
+    adc_select_input(adc_input);
+
+    adc_set_clkdiv(adc_clk_div);
+    adc_fifo_setup(true, false, 1, false, false);
+
+    adc_run(true);
+}
+
+int adc_fifo_read(void) {
+    int volume = 4095;
+    adc_fifo_drain();
+    volume = adc_fifo_get_blocking();
+    return volume;
+}
+
+
+void trigger(int slot) {
+    switch(slot) {
+        case 2:
+            snare_played = true;
+            break;
+        case 3:
+            hitom_played = true;
+            break;
+        case 4:
+            midtom_played = true;
+            break;
+        case 6:
+            hihat_played = true;
+            break;
+        default:
+            break;
+    }
+}
+
+
 /* ==================== 主程序 ==================== */
 int main(void){
     stdio_init_all();
+
+    // PWM Init Begin
+    stdio_init_all();
+    init_pwm_audio();
+    init_adc();
+    // PWM Init End
+
     sleep_ms(300);
 
     i2c_bus_init();
@@ -359,6 +493,10 @@ int main(void){
                 settle_hits--;
             } else {
                 int slot = slot_from_pose(tilt_corr, yaw_now, gy_now);
+
+                //PWM sound output
+                volume = adc_fifo_read(); // read volume from ADC
+                trigger(slot);
 
                 uint32_t now=to_ms_since_boot(get_absolute_time());
                 if(now - last_hit_ms >= HIT_MIN_GAP_MS){
