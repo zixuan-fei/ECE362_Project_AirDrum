@@ -5,6 +5,7 @@
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 #include "imu_io.h"
+#include "customize.h"
 
 // ========= I2C / LSM6DSOX =========
 #define I2C_PORT      i2c0
@@ -257,6 +258,50 @@ static void print_pose_at_hit(uint32_t hit_id,
     }
 }
 
+/* ==================== VGA 可视化 ==================== */
+static bool g_vga_ready = false;
+
+static void vga_init_display(void){
+    ensure_pin_layout();
+    initVGA();
+    show_project_name();
+    sleep_ms(3000);
+    show_loading_sequence();
+    show_drum_intro();
+    show_drum();
+    draw_hit_label("Ready");
+    g_vga_ready = true;
+}
+
+static void vga_hit_animation(int slot, float yaw_deg){
+    if (!g_vga_ready) return;
+
+    switch (slot) {
+        case 2:  // SNARE -> 左上鼓
+            hit_left_upper_tom();
+            break;
+        case 3:  // HI_TOM -> 中间两上鼓
+            hit_upper_toms();
+            break;
+        case 4:  // MEDIUM_TOM -> 右上鼓
+            hit_right_upper_tom();
+            break;
+        case 5:  // FLOOR_TOM -> 左/右地鼓
+            if (yaw_deg < 0.0f) hit_left_floor_tom();
+            else                hit_right_floor_tom();
+            break;
+        case 6:  // CYMBAL -> 左/中/右镲
+            if      (yaw_deg <= -YAW_ON_DEG) hit_left_cymbal();
+            else if (yaw_deg >=  YAW_ON_DEG) hit_right_cymbal();
+            else                             hit_middle_cymbal();
+            break;
+        default:
+            show_drum();
+            draw_hit_label("Ready");
+            break;
+    }
+}
+
 /* ==================== 主程序 ==================== */
 int main(void){
     stdio_init_all();
@@ -275,6 +320,9 @@ int main(void){
     // 姿态初始化 + 预热&零位
     pose_reset();
     pose_warmup_and_zero();
+
+    // 启动 VGA 显示
+    vga_init_display();
 
     // 初始化命中检测
     int16_t ax0,ay0,az0;
@@ -323,6 +371,9 @@ int main(void){
                     print_pose_at_hit(g_hit_count, slot,
                                       tilt_raw, tilt_corr,
                                       yaw_now, ghat, gy_now);
+
+                    // 触发 VGA 击打动画
+                    vga_hit_animation(slot, yaw_now);
 
                     // 命中后轻度衰减 yaw，避免不断累积
                     yaw_rel_deg *= 0.6f;

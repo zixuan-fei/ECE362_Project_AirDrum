@@ -1,0 +1,4 @@
+Brown line: GND
+White: 40
+Green_Yello_Brown: 41
+Green: 5V
